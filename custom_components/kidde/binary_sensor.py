@@ -89,6 +89,11 @@ _BINARY_SENSOR_DESCRIPTIONS = (
         name="Reset Flag",
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
+    BinarySensorEntityDescription(
+        key="locate_active",
+        icon="mdi:map-marker-alert",
+        name="Locate Active",
+    ),
 )
 
 _INVERSE_BINARY_SENSOR_DESCRIPTIONS = (
