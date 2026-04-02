@@ -42,6 +42,23 @@ KEY_TEMPERATURE = "temperature"
 logger = logging.getLogger(__name__)
 
 
+_LIST_SENSOR_DESCRIPTIONS = (
+    SensorEntityDescription(
+        key="cap_sensor",
+        icon="mdi:format-list-bulleted",
+        name="Sensor Capabilities",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+    ),
+    SensorEntityDescription(
+        key="capabilities",
+        icon="mdi:chip",
+        name="Hardware Capabilities",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+    ),
+)
+
 _TIMESTAMP_DESCRIPTIONS = (
     SensorEntityDescription(
         key="last_seen",
@@ -63,6 +80,19 @@ _TIMESTAMP_DESCRIPTIONS = (
     ),
 )
 
+_MAPPED_SENSOR_DESCRIPTIONS = {
+    "end_of_life_status": {
+        "description": SensorEntityDescription(
+            key="end_of_life_status",
+            icon="mdi:calendar-remove",
+            name="End of Life Status",
+            device_class=SensorDeviceClass.ENUM,
+            options=["Normal", "Warning", "Critical"],
+        ),
+        "mapping": {0: "Normal", 1: "Normal", 2: "Warning", 3: "Critical"},
+    },
+}
+
 _SENSOR_DESCRIPTIONS = (
     SensorEntityDescription(
         key="overall_iaq_status",
@@ -70,6 +100,25 @@ _SENSOR_DESCRIPTIONS = (
         name="Overall Air Quality",
         device_class=SensorDeviceClass.ENUM,
         options=["Very Bad", "Bad", "Moderate", "Good"],
+    ),
+    SensorEntityDescription(
+        key="iaq_state",
+        icon="mdi:air-filter",
+        name="IAQ State",
+        device_class=SensorDeviceClass.ENUM,
+        options=["Normal", "Learning", "Calibrating"],
+    ),
+    SensorEntityDescription(
+        key="iaq_test_status",
+        icon="mdi:test-tube",
+        name="IAQ Test Status",
+    ),
+    SensorEntityDescription(
+        key="iaq_learn_countdown",
+        icon="mdi:counter",
+        name="IAQ Learn Countdown",
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfTime.DAYS,
     ),
     SensorEntityDescription(
         key="smoke_level",
@@ -179,6 +228,34 @@ _SENSOR_DESCRIPTIONS = (
         state_class=SensorStateClass.MEASUREMENT,
         native_unit_of_measurement=UnitOfTemperature.FAHRENHEIT,
     ),
+    SensorEntityDescription(
+        key="mb_model",
+        icon="mdi:chip",
+        name="Mainboard Model",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+    ),
+    SensorEntityDescription(
+        key="temperature_ad",
+        icon="mdi:thermometer",
+        name="Temperature ADC",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+    ),
+    SensorEntityDescription(
+        key="smoke_comp",
+        icon="mdi:smoke",
+        name="Smoke Compensation",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+    ),
+    SensorEntityDescription(
+        key="country_code",
+        icon="mdi:earth",
+        name="Country Code",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+    ),
 )
 
 _SENSOR_MEASUREMENT_DESCRIPTIONS = (
@@ -234,6 +311,23 @@ async def async_setup_entry(
                 "Checking model: [%s]",
                 coordinator.data.devices[device_id].get(KEY_MODEL, "Unknown"),
             )
+
+        for entity_description in _LIST_SENSOR_DESCRIPTIONS:
+            if entity_description.key in device_data:
+                sensors.append(
+                    KiddeSensorListEntity(coordinator, device_id, entity_description)
+                )
+
+        for sensor_key, sensor_config in _MAPPED_SENSOR_DESCRIPTIONS.items():
+            if sensor_key in device_data:
+                sensors.append(
+                    KiddeSensorMappedEntity(
+                        coordinator,
+                        device_id,
+                        sensor_config["description"],
+                        sensor_config["mapping"],
+                    )
+                )
 
         for entity_description in _TIMESTAMP_DESCRIPTIONS:
             if entity_description.key in device_data:
@@ -295,6 +389,65 @@ class KiddeSensorTimestampEntity(KiddeEntity, SensorEntity):
             if logger.isEnabledFor(logging.DEBUG):
                 logger.error("Error parsing datetime '%s': %s", value, e)
             return None
+
+
+class KiddeSensorMappedEntity(KiddeEntity, SensorEntity):
+    """Sensor for Kidde HomeSafe values that need numeric-to-string mapping."""
+
+    def __init__(
+        self,
+        coordinator: KiddeCoordinator,
+        device_id: str,
+        entity_description: SensorEntityDescription,
+        value_mapping: dict[int, str],
+    ) -> None:
+        """Initialize mapped sensor."""
+        super().__init__(coordinator, device_id, entity_description)
+        self._value_mapping = value_mapping
+
+    @property
+    def native_value(self) -> str | None:
+        """Return the mapped value of the sensor."""
+        raw_value = self.kidde_device.get(self.entity_description.key)
+        if raw_value is None:
+            return None
+        if isinstance(raw_value, int):
+            mapped = self._value_mapping.get(raw_value)
+            if mapped is None and logger.isEnabledFor(logging.DEBUG):
+                logger.warning(
+                    "No mapping found for %s value %s",
+                    self.entity_description.key,
+                    raw_value,
+                )
+            return mapped
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.warning(
+                "Expected int for %s, got type %s: %s",
+                self.entity_description.key,
+                type(raw_value),
+                raw_value,
+            )
+        return None
+
+
+class KiddeSensorListEntity(KiddeEntity, SensorEntity):
+    """Sensor for Kidde HomeSafe list/array values."""
+
+    @property
+    def native_value(self) -> str | None:
+        """Return the native value of the sensor as comma-separated string."""
+        value = self.kidde_device.get(self.entity_description.key)
+        if isinstance(value, list):
+            return ", ".join(str(item) for item in value)
+        dtype = type(value)
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.warning(
+                "Expected list for %s, got type %s: %s",
+                self.entity_description.key,
+                dtype,
+                value,
+            )
+        return None
 
 
 class KiddeSensorEntity(KiddeEntity, SensorEntity):
